@@ -1,0 +1,82 @@
+trigger: none
+
+pool: myAgentPool
+
+variables:
+- group: TerraformVariables
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+  default: 'dev'
+  values:
+  - dev
+  - test
+  - prod
+
+stages:
+- stage: TerraformInfrastructureValidation
+  jobs:
+  - job: TerraformInitAndValidate
+    steps:
+    - task: TerraformInstaller@1
+      inputs:
+        terraformVersion: '1.10.0'
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd terraform
+          terraform init
+          terraform validate
+      displayName: 'Terraform Init and Validate'
+
+- stage: TerraformInfrastructureDeployment
+  dependsOn: TerraformInfrastructureValidation
+  condition: succeeded('TerraformInfrastructureValidation')
+  jobs:
+  - deployment: Deploy
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: '1.10.0'
+          
+          - task: DownloadSecureFile@1
+            name: sshKey
+            inputs:
+              secureFile: 'id_rsa.pub'
+            displayName: 'Download SSH public key'
+          
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd terraform
+                
+                # Initialize Terraform
+                terraform init
+                
+                # Create tfvars file dynamically
+                cat << EOF > ${{ parameters.environment }}.tfvars
+                environment = "${{ parameters.environment }}"
+                location = "West Europe"
+                EOF
+                
+                # Plan
+                terraform plan \
+                  -var "subscription_id=$(subscription_id)" \
+                  -var "client_id=$(client_id)" \
+                  -var "client_secret=$(client_secret)" \
+                  -var "tenant_id=$(tenant_id)" \
+                  -var "ssh_public_key=$(cat $(sshKey.secureFilePath))" \
+                  -var-file="${{ parameters.environment }}.tfvars" \
+                  -out=tfplan
+                
+                # Apply
+                terraform apply -auto-approve tfplan
+            displayName: 'Terraform Plan and Apply'
