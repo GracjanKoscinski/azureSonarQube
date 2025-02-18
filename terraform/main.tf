@@ -60,6 +60,18 @@ resource "azurerm_network_security_group" "sonarqube_nsg" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
+
+  security_rule {
+    name                       = "HTTPS"
+    priority                   = 1003
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
 }
 
 # Network Interface
@@ -115,15 +127,31 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
   custom_data = base64encode(<<-EOF
               #!/bin/bash
               apt-get update
-              apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+              apt-get install -y apt-transport-https ca-certificates curl software-properties-common openssl
+
+              # Install Docker
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
               add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
               apt-get update
               apt-get install -y docker-ce docker-ce-cli containerd.io
-              
+
+              # Install docker-compose
               curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               chmod +x /usr/local/bin/docker-compose
-              
+
+            
+              mkdir -p /opt/sonarqube/certs
+
+              #  self-signed certificate
+              openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout /opt/sonarqube/certs/server.key \
+                -out /opt/sonarqube/certs/server.crt \
+                -subj "/C=PL/ST=State/L=City/O=Organization/CN=sonarqube"
+
+              chmod 644 /opt/sonarqube/certs/server.crt
+              chmod 600 /opt/sonarqube/certs/server.key
+
+              # Create docker-compose file
               mkdir -p /opt/sonarqube
               cat << 'DOCKER_COMPOSE' > /opt/sonarqube/docker-compose.yml
               version: "3"
@@ -131,15 +159,22 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
                 sonarqube:
                   image: sonarqube:community
                   ports:
-                    - "9000:9000"
+                    - "443:9000"
                   environment:
                     - SONAR_JDBC_URL=jdbc:postgresql://db:5432/sonar
                     - SONAR_JDBC_USERNAME=sonar
                     - SONAR_JDBC_PASSWORD=sonar
+                    - SONAR_WEB_CONTEXT=/
+                    - SONAR_WEB_HOST=0.0.0.0
+                    - SONAR_WEB_PORT=9000
+                    - SONAR_WEB_HTTPS=true
+                    - SONAR_WEB_CERT=/etc/sonarqube/certs/server.crt
+                    - SONAR_WEB_KEY=/etc/sonarqube/certs/server.key
                   volumes:
                     - sonarqube_data:/opt/sonarqube/data
                     - sonarqube_extensions:/opt/sonarqube/extensions
                     - sonarqube_logs:/opt/sonarqube/logs
+                    - ./certs:/etc/sonarqube/certs
                   depends_on:
                     - db
                 db:
@@ -150,7 +185,7 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
                   volumes:
                     - postgresql:/var/lib/postgresql
                     - postgresql_data:/var/lib/postgresql/data
-              
+
               volumes:
                 sonarqube_data:
                 sonarqube_extensions:
@@ -158,15 +193,16 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
                 postgresql:
                 postgresql_data:
               DOCKER_COMPOSE
-              
+
               sysctl -w vm.max_map_count=262144
               sysctl -w fs.file-max=65536
               ulimit -n 65536
               ulimit -u 4096
-            
+
               echo "vm.max_map_count=262144" >> /etc/sysctl.conf
               echo "fs.file-max=65536" >> /etc/sysctl.conf
-              
+
+              # Run SonarQube
               cd /opt/sonarqube
               docker-compose up -d
               EOF
