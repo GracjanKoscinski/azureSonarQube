@@ -80,3 +80,19 @@ stages:
                 # Apply
                 terraform apply -auto-approve tfplan
             displayName: 'Terraform Plan and Apply'
+            
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd terraform
+                
+                # Wyświetl outputy
+                echo "===================================="
+                echo "SonarQube Installation Information:"
+                echo "===================================="
+                terraform output sonarqube_url
+                terraform output sonarqube_domain
+                terraform output sonarqube_admin_credentials
+                echo "===================================="
+            displayName: 'Display Access Information'
