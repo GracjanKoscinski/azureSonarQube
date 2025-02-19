@@ -123,4 +123,9 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
     sku       = "sonarqube_on_ubuntu_22_4lts"
     version   = "0.0.1"
   }
+   plan {
+    name      = "sonarqube_on_ubuntu_22_4lts"
+    product   = "sonarqube_on_ubuntu_22_4lts"
+    publisher = "askforcloudllc1651766049149"
+  }
   }
