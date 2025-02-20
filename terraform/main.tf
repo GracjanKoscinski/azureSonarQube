@@ -23,14 +23,13 @@ resource "azurerm_subnet" "sonarqube_subnet" {
   address_prefixes     = ["10.0.1.0/24"]
 }
 
-# Public IP
 resource "azurerm_public_ip" "sonarqube_pip" {
   name                = "pip-sonarqube-${var.environment}"
   location           = azurerm_resource_group.sonarqube_rg.location
   resource_group_name = azurerm_resource_group.sonarqube_rg.name
-  allocation_method   = "Dynamic"
+  allocation_method   = "Static"
+  domain_name_label   = "sonarqube-${var.environment}"  
 }
-
 # Network Security Group
 resource "azurerm_network_security_group" "sonarqube_nsg" {
   name                = "nsg-sonarqube-${var.environment}"
@@ -112,7 +111,7 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
     version   = "latest"
   }
 
-  custom_data = base64encode(<<-EOF
+   custom_data = base64encode(<<-EOF
               #!/bin/bash
              
               apt-get update
@@ -123,7 +122,10 @@ resource "azurerm_linux_virtual_machine" "sonarqube_vm" {
               add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
               apt-get update
               apt-get install -y docker-ce docker-ce-cli containerd.io
-
+              usermod -aG docker azureuser
+              # Ensure docker socket has correct permissions
+              chmod 666 /var/run/docker.sock
+              systemctl restart docker
               #  Docker Compose
               curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               chmod +x /usr/local/bin/docker-compose
